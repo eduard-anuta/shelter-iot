@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shelter Telecom - Monitorizare Telemetrie</title>
+  <!-- Tailwind CSS pentru design modern -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- MQTT.js pentru conexiune WebSockets -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- FontAwesome pentru pictograme -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
+
+  <div class="max-w-6xl mx-auto space-y-6">
+    
+    <!-- Header & Conexiune Status -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl gap-4">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
+          <i class="fa-solid fa-tower-cell text-blue-500"></i> Shelter Telecom - Dispecerat IoT
+        </h1>
+        <p class="text-slate-400 text-sm mt-1">Nod de monitorizare bazat pe ESP32-ETH01 & MQTT</p>
+      </div>
+      <div class="flex items-center gap-3 bg-slate-950/80 px-4 py-2 rounded-xl border border-slate-800">
+        <span id="status-dot" class="w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse"></span>
+        <span id="status-text" class="text-sm font-semibold text-slate-300">Deconectat de la Broker</span>
+      </div>
+    </header>
+
+    <!-- Grilă Carduri Telemetrie -->
+    <main class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+      
+      <!-- Card Temperatură Interior -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg relative overflow-hidden">
+        <div class="flex justify-between items-start">
+          <span class="text-xs uppercase font-semibold text-slate-400 tracking-wider">Temperatură DHT22</span>
+          <div class="p-2.5 bg-orange-500/10 text-orange-400 rounded-xl">
+            <i class="fa-solid fa-temperature-half text-lg"></i>
+          </div>
+        </div>
+        <div class="mt-4 flex items-baseline gap-2">
+          <span id="val-temp" class="text-4xl font-extrabold text-white">--</span>
+          <span class="text-slate-400 font-medium">°C</span>
+        </div>
+        <div class="mt-3 text-xs text-slate-400 flex items-center gap-1.5">
+          <i class="fa-solid fa-microchip text-slate-500"></i> Senzor ambient intern
+        </div>
+      </div>
+
+      <!-- Card Umiditate -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg relative overflow-hidden">
+        <div class="flex justify-between items-start">
+          <span class="text-xs uppercase font-semibold text-slate-400 tracking-wider">Umiditate Relativă</span>
+          <div class="p-2.5 bg-cyan-500/10 text-cyan-400 rounded-xl">
+            <i class="fa-solid fa-droplet text-lg"></i>
+          </div>
+        </div>
+        <div class="mt-4 flex items-baseline gap-2">
+          <span id="val-umid" class="text-4xl font-extrabold text-white">--</span>
+          <span class="text-slate-400 font-medium">%</span>
+        </div>
+        <div class="mt-3 text-xs text-slate-400 flex items-center gap-1.5">
+          <i class="fa-solid fa-wind text-slate-500"></i> Interval optim: 40 - 60%
+        </div>
+      </div>
+
+      <!-- Card Senzor Ușă (MC-38) -->
+      <div id="card-usa" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg transition-all">
+        <div class="flex justify-between items-start">
+          <span class="text-xs uppercase font-semibold text-slate-400 tracking-wider">Senzor Ușă Acces</span>
+          <div id="icon-usa-bg" class="p-2.5 bg-slate-800 text-slate-400 rounded-xl">
+            <i id="icon-usa" class="fa-solid fa-door-closed text-lg"></i>
+          </div>
+        </div>
+        <div class="mt-4">
+          <span id="val-usa" class="text-2xl font-bold text-slate-300">Așteptare date...</span>
+        </div>
+        <div class="mt-3 text-xs text-slate-400 flex items-center gap-1.5">
+          <i class="fa-solid fa-shield-halved text-slate-500"></i> Contact magnetic MC-38
+        </div>
+      </div>
+
+      <!-- Card Mișcare PIR (AM312) -->
+      <div id="card-pir" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg transition-all">
+        <div class="flex justify-between items-start">
+          <span class="text-xs uppercase font-semibold text-slate-400 tracking-wider">Detecție Mișcare</span>
+          <div id="icon-pir-bg" class="p-2.5 bg-slate-800 text-slate-400 rounded-xl">
+            <i class="fa-solid fa-person-walking text-lg"></i>
+          </div>
+        </div>
+        <div class="mt-4">
+          <span id="val-pir" class="text-2xl font-bold text-slate-300">Așteptare date...</span>
+        </div>
+        <div class="mt-3 text-xs text-slate-400 flex items-center gap-1.5">
+          <i class="fa-solid fa-radar text-slate-500"></i> Senzor pasiv PIR
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Secțiune Alerte Secundare și Stare Relee -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      
+      <!-- Stare Inundație / Apă -->
+      <div id="card-apa" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
+        <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-water text-blue-400"></i> Protecție Inundație Shelter
+        </h2>
+        <div class="flex items-center justify-between p-4 bg-slate-950/60 rounded-xl border border-slate-800/80">
+          <div>
+            <p id="val-apa-text" class="text-lg font-bold text-white">Nivel apă: Normal</p>
+            <p class="text-xs text-slate-400 mt-0.5">Senzori rezistivi pe podea</p>
+          </div>
+          <span id="badge-apa" class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">USCAT</span>
+        </div>
+      </div>
+
+      <!-- Monitorizare Relee -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
+        <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-toggle-on text-purple-400"></i> Stare Relee Comandă
+        </h2>
+        <div class="grid grid-cols-4 gap-2">
+          <div class="text-center p-3 bg-slate-950/60 rounded-xl border border-slate-800">
+            <span class="text-xs text-slate-400 block mb-1">R1 Clima</span>
+            <span id="rel-1" class="text-xs font-bold text-slate-400">OFF</span>
+          </div>
+          <div class="text-center p-3 bg-slate-950/60 rounded-xl border border-slate-800">
+            <span class="text-xs text-slate-400 block mb-1">R2 Ventil.</span>
+            <span id="rel-2" class="text-xs font-bold text-slate-400">OFF</span>
+          </div>
+          <div class="text-center p-3 bg-slate-950/60 rounded-xl border border-slate-800">
+            <span class="text-xs text-slate-400 block mb-1">R3 Sirenă</span>
+            <span id="rel-3" class="text-xs font-bold text-slate-400">OFF</span>
+          </div>
+          <div class="text-center p-3 bg-slate-950/60 rounded-xl border border-slate-800">
+            <span class="text-xs text-slate-400 block mb-1">R4 Aux</span>
+            <span id="rel-4" class="text-xs font-bold text-slate-400">OFF</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Consolă JSON brut pentru Verificare -->
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Ultimul Pachet JSON Primit</span>
+        <span id="last-update" class="text-xs text-slate-500 font-mono">Nicio actualizare</span>
+      </div>
+      <pre id="json-raw" class="bg-slate-950 p-4 rounded-xl text-xs text-emerald-400 font-mono overflow-x-auto border border-slate-800/80">Așteptare mesaje pe topic...</pre>
+    </div>
+
+  </div>
+
+  <script>
+    // ==========================================
+    // CONFIGURARE CONEXIUNE MQTT PESTE WEBSOCKETS
+    // ==========================================
+    // Pentru broker public HiveMQ (folosește portul securizat WSS 8884):
+    const BROKER_URL = "wss://broker.hivemq.com:8884/mqtt";
+    const TOPIC_TELEMETRIE = "licenta/shelter1/telemetrie";
+
+    // Dacă folosești Mosquitto local pe Windows 11, adresa devine:
+    // const BROKER_URL = "ws://localhost:9001"; // Necesită WebSockets activat în mosquitto.conf
+
+    const statusDot = document.getElementById("status-dot");
+    const statusText = document.getElementById("status-text");
+    const jsonDisplay = document.getElementById("json-raw");
+    const lastUpdate = document.getElementById("last-update");
+
+    console.log("Conectare la broker MQTT:", BROKER_URL);
+    const client = mqtt.connect(BROKER_URL, {
+      clientId: "web_client_" + Math.random().toString(16).substring(2, 8),
+      clean: true,
+      connectTimeout: 5000
+    });
+
+    client.on("connect", () => {
+      statusDot.className = "w-3.5 h-3.5 rounded-full bg-emerald-500";
+      statusText.innerText = "Conectat la Broker MQTT";
+      statusText.className = "text-sm font-semibold text-emerald-400";
+      
+      client.subscribe(TOPIC_TELEMETRIE, (err) => {
+        if (!err) {
+          console.log("Abonat cu succes la:", TOPIC_TELEMETRIE);
+        }
+      });
+    });
+
+    client.on("offline", () => {
+      statusDot.className = "w-3.5 h-3.5 rounded-full bg-amber-500 animate-pulse";
+      statusText.innerText = "Reconectare...";
+      statusText.className = "text-sm font-semibold text-amber-400";
+    });
+
+    client.on("error", (err) => {
+      statusDot.className = "w-3.5 h-3.5 rounded-full bg-red-500";
+      statusText.innerText = "Eroare Conexiune";
+      statusText.className = "text-sm font-semibold text-red-400";
+    });
+
+    client.on("message", (topic, message) => {
+      try {
+        const payload = JSON.parse(message.toString());
+        lastUpdate.innerText = new Date().toLocaleTimeString();
+        jsonDisplay.innerText = JSON.stringify(payload, null, 2);
+
+        // 1. Temperatură și Umiditate
+        if (payload.temp_int_C !== undefined) {
+          document.getElementById("val-temp").innerText = Number(payload.temp_int_C).toFixed(1);
+        }
+        if (payload.umid_int_pct !== undefined) {
+          document.getElementById("val-umid").innerText = Number(payload.umid_int_pct).toFixed(1);
+        }
+
+        // 2. Senzor Ușă (MC-38)
+        const valUsa = document.getElementById("val-usa");
+        const iconUsa = document.getElementById("icon-usa");
+        const iconUsaBg = document.getElementById("icon-usa-bg");
+        if (payload.alarma_usa !== undefined) {
+          if (payload.alarma_usa === true) {
+            valUsa.innerText = "UȘĂ DESCHISĂ!";
+            valUsa.className = "text-2xl font-bold text-red-500 animate-pulse";
+            iconUsa.className = "fa-solid fa-door-open text-lg";
+            iconUsaBg.className = "p-2.5 bg-red-500/20 text-red-400 rounded-xl";
+          } else {
+            valUsa.innerText = "Securizată (Închisă)";
+            valUsa.className = "text-2xl font-bold text-emerald-400";
+            iconUsa.className = "fa-solid fa-door-closed text-lg";
+            iconUsaBg.className = "p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl";
+          }
+        }
+
+        // 3. Senzor Mișcare (PIR)
+        const valPir = document.getElementById("val-pir");
+        const iconPirBg = document.getElementById("icon-pir-bg");
+        if (payload.alarma_miscare !== undefined) {
+          if (payload.alarma_miscare === true) {
+            valPir.innerText = "MIȘCARE DETECTATĂ";
+            valPir.className = "text-2xl font-bold text-amber-400 animate-bounce";
+            iconPirBg.className = "p-2.5 bg-amber-500/20 text-amber-400 rounded-xl";
+          } else {
+            valPir.innerText = "Fără Mișcare";
+            valPir.className = "text-2xl font-bold text-slate-300";
+            iconPirBg.className = "p-2.5 bg-slate-800 text-slate-400 rounded-xl";
+          }
+        }
+
+        // 4. Inundație
+        const badgeApa = document.getElementById("badge-apa");
+        const valApaText = document.getElementById("val-apa-text");
+        if (payload.alarma_inundatie !== undefined) {
+          if (payload.alarma_inundatie === true) {
+            badgeApa.innerText = "ALARMĂ APĂ!";
+            badgeApa.className = "px-3 py-1 rounded-full text-xs font-bold bg-red-500 text-white animate-pulse";
+            valApaText.innerText = "AVARIE: Apă detectată pe podea!";
+            valApaText.className = "text-lg font-bold text-red-400";
+          } else {
+            badgeApa.innerText = "USCAT";
+            badgeApa.className = "px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+            valApaText.innerText = "Nivel apă: Normal";
+            valApaText.className = "text-lg font-bold text-white";
+          }
+        }
+
+        // 5. Stare Relee (1 - 4)
+        for (let i = 1; i <= 4; i++) {
+          const key = "releu" + i;
+          const el = document.getElementById("rel-" + i);
+          if (el && payload[key] !== undefined) {
+            if (payload[key] === true) {
+              el.innerText = "ACTIV";
+              el.className = "text-xs font-bold text-emerald-400";
+            } else {
+              el.innerText = "OFF";
+              el.className = "text-xs font-bold text-slate-500";
+            }
+          }
+        }
+
+      } catch (e) {
+        console.error("Eroare la parsarea JSON:", e);
+      }
+    });
+  </script>
+</body>
+</html>
